@@ -3,7 +3,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Text;
+using Microsoft.Win32;
+using System.Collections.Generic;
+
 
 namespace InstallHelp
 {
@@ -43,21 +47,6 @@ namespace InstallHelp
 			}
 		}
 
-		static string GetPowerShellPath()
-		{
-			string app_path = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-			string app_wow_path = "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe";
-			if (File.Exists(app_path))
-			{
-				return app_path;
-			}
-			if (File.Exists(app_wow_path))
-			{
-				return app_wow_path;
-			}
-			throw new FileNotFoundException("貌似不存在PowerShell");
-		}
-
 		static void GetDNSPath(out string workerPath, out string appPath)
 		{
 			string basePath = AppDomain.CurrentDomain.BaseDirectory;
@@ -65,19 +54,52 @@ namespace InstallHelp
 			appPath = Path.Combine(workerPath, "AcrylicUI.exe");
 		}
 
-		static void SetDnsServerAddressLocalHost()
+		static string CreateRegistryPath(bool isIPv4, string id)
 		{
-            Run(GetPowerShellPath(), "-Command \"Get-NetAdapter -Name * | Set-DnsClientServerAddress -ServerAddresses ('127.0.0.1','::1')\"", string.Empty);
+			string ip = isIPv4 ? "Tcpip" : "Tcpip6";
+
+			var vs = new string[] { "SYSTEM", "ControlSet001", "Services", ip, "Parameters", "Interfaces", id };
+
+
+			return string.Join(@"\", vs);
+
+		}
+
+		static void SetDnsServerAddress(bool isIPv4, string ip)
+		{
+
+
+
+			var vs = NetworkInterface.GetAllNetworkInterfaces()
+				.Where(p => p.NetworkInterfaceType == NetworkInterfaceType.Ethernet || p.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+				.Select(p => p.Id)
+				.Select(p => CreateRegistryPath(isIPv4, p))
+				.Select(p => Registry.LocalMachine.OpenSubKey(p, true))
+				.ToArray();
+
+			Array.ForEach(vs, e => e.SetValue("NameServer", ip));
+		}
+
+
+
+		static void SetDnsServerAddress()
+		{
+			SetDnsServerAddress(true, "127.0.0.1");
+			SetDnsServerAddress(false, "::1");
 		}
 
 		static void ResetDnsServerAddress()
 		{
-            Run(GetPowerShellPath(), "-Command \"Get-NetAdapter -Name * | Set-DnsClientServerAddress -ResetServerAddresses\"", string.Empty);
+			SetDnsServerAddress(true, "");
+			SetDnsServerAddress(false, "");
 		}
 
 		static void FlashDnsCache()
 		{
-            Run(GetPowerShellPath(), "-Command \"Clear-DnsClientCache\"", string.Empty);
+			var path = @"C:\Windows\System32\ipconfig.exe";
+
+
+			Run(path, "/flushdns", string.Empty);
 		}
 
 		static void InstallDNSServer()
@@ -86,7 +108,7 @@ namespace InstallHelp
             Run(appPath, "UninstallAcrylicService", basePath);
             Run(appPath, "InstallAcrylicService", basePath);
             Run(appPath, "StartAcrylicService", basePath);
-            SetDnsServerAddressLocalHost();
+            SetDnsServerAddress();
             FlashDnsCache();
 		}
 
@@ -148,8 +170,8 @@ namespace InstallHelp
 			File.WriteAllText(path, s, Encoding.UTF8);
 		}
 
-		static void Main(string[] args)
-		{
+		static void InstallMain()
+        {
 			string newline = Environment.NewLine;
 			int flag = GetFromConsole<int, FormatException>(string.Concat(new string[]
 			{
@@ -176,21 +198,21 @@ namespace InstallHelp
 				if (flag == 0)
 				{
 					Console.WriteLine("正在安装");
-                    SetFastIP(TextFastIP());
-                    InstallDNSServer();
+					SetFastIP(TextFastIP());
+					InstallDNSServer();
 					Console.WriteLine("安装完成可以关闭窗口");
 				}
 				else if (flag == 1)
 				{
 					Console.WriteLine("正在测速");
-                    SetFastIP(TextFastIP());
-                    ReStartDNSServer();
+					SetFastIP(TextFastIP());
+					ReStartDNSServer();
 					Console.WriteLine("测速完成可以关闭窗口");
 				}
 				else
 				{
 					Console.WriteLine("正在卸载");
-                    UnInstallDNSServer();
+					UnInstallDNSServer();
 					Console.WriteLine("卸载完成可以关闭窗口");
 				}
 			}
@@ -200,6 +222,16 @@ namespace InstallHelp
 				Console.WriteLine(value);
 			}
 			Console.ReadLine();
+		}
+
+
+		
+
+		static void Main(string[] args)
+		{
+
+			InstallMain();
+
 		}
 
 	}
