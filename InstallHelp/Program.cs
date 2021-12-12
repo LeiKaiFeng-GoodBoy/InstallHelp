@@ -144,31 +144,42 @@ namespace InstallHelp
 			}, StringSplitOptions.RemoveEmptyEntries).First<string>());
 		}
 
-		static IPAddress TextFastIP()
+		static IPAddress[] TextFastIP()
 		{
             GetTestIPAPPPath(out string dirPath, out string appPath, out string csvPath);
-            ProcessStartInfo processStartInfo = new ProcessStartInfo
-            {
-                WorkingDirectory = dirPath,
-                FileName = appPath,
-                UseShellExecute = false,
-                Arguments = "-dd"
-            };
-            Console.WriteLine("正在测速IP请耐心等待不要关闭窗口,保持网络链接正常");
-			using (Process p = Process.Start(processStartInfo))
-			{
-				p.WaitForExit();
-			}
-			return GetCSV(csvPath);
+
+			Console.WriteLine("正在测速IP请耐心等待不要关闭窗口,保持网络链接正常,测速完毕一定要按回车,千万不要点击右上角的X");
+
+			Run(appPath, "-dd -tll 100", dirPath);
+
+			return new IPAddress[] { GetCSV(csvPath) };
 		}
 
-		static void SetFastIP(IPAddress ip)
+		static void SetFastIP(IPAddress[] ip)
+        {
+			var vs = ip.Select(p => new KeyValuePair<string, string>(p.ToString(), "*.iwara.tv"))
+			.Append(new KeyValuePair<string, string>("127.0.0.5", "ajax.googleapis.com"))
+			.ToArray();
+
+			SetFastIP(vs);
+        }
+
+		static void SetFastIP(KeyValuePair<string, string>[] vs)
 		{
             GetDNSPath(out string dirPath, out _);
             string path = Path.Combine(dirPath, "hosts.txt");
-			string s = "127.0.0.5 ajax.googleapis.com" + Environment.NewLine + string.Format("{0} *.iwara.tv", ip);
-			File.WriteAllText(path, s, Encoding.UTF8);
+
+			var seq = vs.Select(p => string.Join(" ", new string[] { p.Key, p.Value }));
+
+			string s = string.Join(Environment.NewLine, seq);
+
+			File.WriteAllText(path, s, new UTF8Encoding(false));
 		}
+
+		static IPAddress[] GetCloudFlareDns()
+        {
+			return Dns.GetHostAddresses("workers.cloudflare.com");
+        }
 
 		static void InstallMain()
         {
@@ -181,13 +192,15 @@ namespace InstallHelp
 				newline,
 				"1 重新测速IP",
 				newline,
-				"2 卸载",
+				"2 假如安装了也重测了都没有效果可以选这个试试",
+				newline,
+				"3 卸载",
 				newline,
 				"请输入:"
 			}), delegate (string s)
 			{
 				int i = int.Parse(s);
-				if (i > 2)
+				if (i > 3)
 				{
 					throw new FormatException();
 				}
@@ -208,6 +221,13 @@ namespace InstallHelp
 					SetFastIP(TextFastIP());
 					ReStartDNSServer();
 					Console.WriteLine("测速完成可以关闭窗口");
+				}
+				else if (flag == 2)
+                {
+					Console.WriteLine("正在获取极大可能有效但是速度可能不快的IP");
+					SetFastIP(GetCloudFlareDns());
+					ReStartDNSServer();
+					Console.WriteLine("IP替换完成可以关闭窗口");
 				}
 				else
 				{
