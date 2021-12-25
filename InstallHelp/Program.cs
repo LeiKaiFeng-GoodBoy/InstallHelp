@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
 using LeiKaiFeng.X509Certificates;
+using Microsoft.Win32;
 
 namespace InstallHelp
 {
@@ -200,33 +202,56 @@ namespace InstallHelp
             }
         }
 
-     
 
-        static string GetPowerShellPath()
+        static string CreateRegistryPath(bool isIPv4, string id)
         {
-            //只有64位系统仅安装32位PS的时候才存在于WOW64
+            string ip = isIPv4 ? "Tcpip" : "Tcpip6";
 
-        
-            var app_path = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
-
-            var app_wow_path = @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
+            var vs = new string[] { "SYSTEM", "ControlSet001", "Services", ip, "Parameters", "Interfaces", id };
 
 
-            if (File.Exists(app_path))
-            {
-                return app_path;
-            }
-            else if (File.Exists(app_wow_path))
-            {
-                return app_wow_path;
-            }
-            else
-            {
-                throw new FileNotFoundException("貌似不存在PowerShell");
-            }
+            return string.Join(@"\", vs);
+
         }
 
-      
+        static void SetDnsServerAddress(bool isIPv4, string ip)
+        {
+
+
+
+            var vs = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(p => p.NetworkInterfaceType == NetworkInterfaceType.Ethernet || p.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+                .Select(p => p.Id)
+                .Select(p => CreateRegistryPath(isIPv4, p))
+                .Select(p => Registry.LocalMachine.OpenSubKey(p, true))
+                .ToArray();
+
+            Array.ForEach(vs, e => e.SetValue("NameServer", ip));
+        }
+
+
+
+        static void SetDnsServerAddress()
+        {
+            SetDnsServerAddress(true, "127.0.0.1");
+            SetDnsServerAddress(false, "::1");
+        }
+
+        static void ResetDnsServerAddress()
+        {
+            SetDnsServerAddress(true, "");
+            SetDnsServerAddress(false, "");
+        }
+
+        static void FlashDnsCache()
+        {
+            var path = @"C:\Windows\System32\ipconfig.exe";
+
+
+            Run(path, "/flushdns", string.Empty);
+        }
+
+
         static void GetDNSPath(out string workerPath, out string appPath)
         {
             var basePath = AppDomain.CurrentDomain.BaseDirectory;
@@ -249,8 +274,9 @@ namespace InstallHelp
             
             Run(appPath, "StartAcrylicService", basePath);
 
+            SetDnsServerAddress();
 
-            Run(GetPowerShellPath(), @"-Command ""(Get-NetAdapter -Name * | Set-DnsClientServerAddress -ServerAddresses ('127.0.0.1','::1')) -OR (Clear-DnsClientCache)""", basePath);
+            FlashDnsCache();
 
 
         }
@@ -260,9 +286,10 @@ namespace InstallHelp
         {
             GetDNSPath(out var basePath, out var appPath);
 
+            ResetDnsServerAddress();
 
-            Run(GetPowerShellPath(), @"-Command ""(Get-NetAdapter -Name * | Set-DnsClientServerAddress -ResetServerAddresses) -OR (Clear-DnsClientCache)""", basePath);
-
+            FlashDnsCache();
+         
 
             Run(appPath, "UninstallAcrylicService", basePath);
         }
