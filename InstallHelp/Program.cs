@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Management;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -12,6 +14,67 @@ using Microsoft.Win32;
 
 namespace InstallHelp
 {
+
+
+    public static class SetDnsServerAddress
+    {
+
+        static void SetIPv6(string guidID, IPAddress[] dnsIPs)
+        {
+
+            var vs = new string[] { "SYSTEM", "ControlSet001", "Services", "Tcpip6", "Parameters", "Interfaces", guidID };
+            var path = string.Join(@"\", vs);
+
+            var reg = Registry.LocalMachine.OpenSubKey(path, true);
+
+            reg.SetValue("NameServer", string.Join<IPAddress>(",", dnsIPs));
+        }
+
+
+        static void SetIPv4(string guidID, IPAddress[] dnsIPs)
+        {
+            ManagementObject[] GetInstances()
+            {
+                return (new ManagementClass("Win32_NetworkAdapterConfiguration"))
+                    .GetInstances()
+                    .Cast<ManagementObject>()
+                    .Where(mo => mo["SettingID"].ToString().Equals(guidID))
+                    .ToArray();
+            }
+
+            foreach (ManagementObject objMO in GetInstances())
+            {
+                ManagementBaseObject objdns = objMO.GetMethodParameters("SetDNSServerSearchOrder");
+
+                var dnsvs = dnsIPs.Select(p => p.ToString()).ToArray();
+
+                objdns["DNSServerSearchOrder"] = dnsvs;
+
+                objMO.InvokeMethod("SetDNSServerSearchOrder", objdns, null);
+            }
+        }
+
+
+
+
+        public static void Set(string[] guidIDs, IPAddress[] dnsIPs)
+        {
+            var ipv4 = dnsIPs.Where(p => p.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork).ToArray();
+
+            var ipv6 = dnsIPs.Where(p => p.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6).ToArray();
+
+
+
+            foreach (var guid in guidIDs)
+            {
+                SetIPv6(guid, ipv6);
+
+                SetIPv4(guid, ipv4);
+            }
+        }
+    }
+
+
     class Program
     {
 
@@ -203,45 +266,6 @@ namespace InstallHelp
         }
 
 
-        static string CreateRegistryPath(bool isIPv4, string id)
-        {
-            string ip = isIPv4 ? "Tcpip" : "Tcpip6";
-
-            var vs = new string[] { "SYSTEM", "ControlSet001", "Services", ip, "Parameters", "Interfaces", id };
-
-
-            return string.Join(@"\", vs);
-
-        }
-
-        static void SetDnsServerAddress(bool isIPv4, string ip)
-        {
-
-
-
-            var vs = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(p => p.NetworkInterfaceType == NetworkInterfaceType.Ethernet || p.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
-                .Select(p => p.Id)
-                .Select(p => CreateRegistryPath(isIPv4, p))
-                .Select(p => Registry.LocalMachine.OpenSubKey(p, true))
-                .ToArray();
-
-            Array.ForEach(vs, e => e.SetValue("NameServer", ip));
-        }
-
-
-
-        static void SetDnsServerAddress()
-        {
-            SetDnsServerAddress(true, "127.0.0.1");
-            SetDnsServerAddress(false, "::1");
-        }
-
-        static void ResetDnsServerAddress()
-        {
-            SetDnsServerAddress(true, "");
-            SetDnsServerAddress(false, "");
-        }
 
         static void FlashDnsCache()
         {
@@ -261,6 +285,13 @@ namespace InstallHelp
             appPath = Path.Combine(workerPath, "AcrylicUI.exe");
         }
 
+        public static string[] GetActiveEthernetOrWifiNetworkInterface()
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(a => a.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 || a.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
+                .Select(p => p.Id)
+                .ToArray();
+        }
 
         static void InstallDNSServer()
         {
@@ -274,7 +305,7 @@ namespace InstallHelp
             
             Run(appPath, "StartAcrylicService", basePath);
 
-            SetDnsServerAddress();
+            SetDnsServerAddress.Set(GetActiveEthernetOrWifiNetworkInterface(), new IPAddress[] { IPAddress.Loopback, IPAddress.IPv6Loopback });
 
             FlashDnsCache();
 
@@ -286,7 +317,8 @@ namespace InstallHelp
         {
             GetDNSPath(out var basePath, out var appPath);
 
-            ResetDnsServerAddress();
+
+            SetDnsServerAddress.Set(GetActiveEthernetOrWifiNetworkInterface(), new IPAddress[] { });
 
             FlashDnsCache();
          
