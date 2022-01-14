@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.Win32;
 using System.Collections.Generic;
 using System.Management;
+using System.Management.Automation;
 
 namespace InstallHelp
 {
@@ -18,7 +19,7 @@ namespace InstallHelp
 		static void SetIPv6(string guidID, IPAddress[] dnsIPs)
 		{
 
-			var vs = new string[] { "SYSTEM", "ControlSet001", "Services", "Tcpip6", "Parameters", "Interfaces", guidID };
+			var vs = new string[] { "SYSTEM", "CurrentControlSet", "Services", "Tcpip6", "Parameters", "Interfaces", guidID };
 			var path = string.Join(@"\", vs);
 
 			var reg = Registry.LocalMachine.OpenSubKey(path, true);
@@ -130,6 +131,22 @@ namespace InstallHelp
 				.ToArray();
 		}
 
+		static void SetDnsAddress(IPAddress[] ips)
+        {
+			
+            try
+            {
+				PsSetDnsClientServerAddress(ips);
+            }
+            catch
+            {
+				Console.WriteLine("通过PowerShell设置Dns服务器地址出错正在通过修改注册表的方式修改");
+				SetDnsServerAddress.Set(GetActiveEthernetOrWifiNetworkInterface(), ips);
+				FlashDnsCache();
+			}
+
+		}
+
 		static void InstallDNSServer()
 		{
             GetDNSPath(out string basePath, out string appPath);
@@ -137,9 +154,7 @@ namespace InstallHelp
             Run(appPath, "InstallAcrylicService", basePath);
             Run(appPath, "StartAcrylicService", basePath);
 
-			SetDnsServerAddress.Set(GetActiveEthernetOrWifiNetworkInterface(), new IPAddress[] { IPAddress.Loopback, IPAddress.IPv6Loopback });
-
-			FlashDnsCache();
+			SetDnsAddress(new IPAddress[] { IPAddress.Loopback, IPAddress.IPv6Loopback });
 		}
 
 		static void ReStartDNSServer()
@@ -155,10 +170,9 @@ namespace InstallHelp
             GetDNSPath(out string basePath, out string appPath);
 
 
-			SetDnsServerAddress.Set(GetActiveEthernetOrWifiNetworkInterface(), new IPAddress[] { });
+			SetDnsAddress(new IPAddress[] { });
 
-			FlashDnsCache();
-            Run(appPath, "UninstallAcrylicService", basePath);
+			Run(appPath, "UninstallAcrylicService", basePath);
 		}
 
 		static void GetTestIPAPPPath(out string dirPath, out string appPath, out string csvPath)
@@ -185,7 +199,16 @@ namespace InstallHelp
 
 			Run(appPath, "-dd -tll 100", dirPath);
 
-			return new IPAddress[] { GetCSV(csvPath) };
+			
+            try
+            {
+				return new IPAddress[] { GetCSV(csvPath) };
+			}
+            catch
+            {
+				return GetCloudFlareDns();
+            }
+			
 		}
 
 		static void SetFastIP(IPAddress[] ip)
@@ -279,6 +302,40 @@ namespace InstallHelp
 
 
 		
+
+		static void PsClearDnsClientCache()
+        {
+			PowerShell.Create()
+				.AddCommand("Clear-DnsClientCache")
+				.Invoke();
+        }
+
+
+		static void PsSetDnsClientServerAddress(IPAddress[] ips)
+        {
+
+
+			var ps = PowerShell.Create()
+				.AddCommand("Get-NetAdapter")
+				.AddParameter("Name", "*")
+				.AddCommand("Set-DnsClientServerAddress");
+
+
+			if (ips.Length == 0)
+			{
+				ps.AddParameter("ResetServerAddresses")
+				.Invoke();
+			}
+            else
+            {
+				ps.AddParameter("ServerAddresses", ips.Select(p => p.ToString()).ToArray())
+				.Invoke();
+			}
+
+
+			PsClearDnsClientCache();
+
+        }
 
 		static void Main(string[] args)
 		{
